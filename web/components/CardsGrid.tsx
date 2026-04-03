@@ -5,7 +5,6 @@ import { motion, useInView } from "framer-motion";
 import Link from "next/link";
 
 const ACCENT_COLORS = {
-  pink: "#f4a0b5",
   mint: "#a0e4c4",
   lavender: "#c4a0f4",
   peach: "#f4c4a0",
@@ -30,7 +29,7 @@ const mockPosts: MockPost[] = [
     difficulty: 2,
     ratingTeaser:
       "Przypalony za pierwszym razem, ale za drugim wyszedł genialnie",
-    accentColor: "pink",
+    accentColor: "mint",
   },
   {
     slug: "zupa-pomidorowa",
