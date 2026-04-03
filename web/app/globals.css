@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #0a0a0a;
+  --color-surface: #111111;
+  --color-card: #161616;
+  --color-foreground: #ffffff;
+  --color-muted: #a0a0a0;
+  --color-pink: #f4a0b5;
+  --color-mint: #a0e4c4;
+  --color-lavender: #c4a0f4;
+  --color-peach: #f4c4a0;
+  --font-display: var(--font-playfair);
+  --font-sans: var(--font-inter);
+}
+
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-card: #161616;
+  --text-primary: #ffffff;
+  --text-muted: #a0a0a0;
+  --accent-pink: #f4a0b5;
+  --accent-mint: #a0e4c4;
+  --accent-lavender: #c4a0f4;
+  --accent-peach: #f4c4a0;
+  --border-default: rgba(255, 255, 255, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: auto;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-inter, system-ui, sans-serif);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle noise texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 300px 300px;
+}
+
+/* Share buttons */
+.share-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.125rem;
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+  cursor: pointer;
+  text-decoration: none;
+  font-family: var(--font-inter, system-ui, sans-serif);
+}
+
+.share-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.share-btn.facebook:hover {
+  color: #1877f2;
+  border-color: #1877f2;
+  box-shadow: 0 0 14px rgba(24, 119, 242, 0.2);
+  background: rgba(24, 119, 242, 0.06);
+}
+
+.share-btn.tiktok:hover {
+  color: #ff0050;
+  border-color: #ff0050;
+  box-shadow: 0 0 14px rgba(255, 0, 80, 0.2);
+  background: rgba(255, 0, 80, 0.06);
+}
+
+.share-btn.instagram:hover {
+  background: linear-gradient(45deg, #833ab4, #fd1d1d, #fcb045);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 0 14px rgba(253, 29, 29, 0.3);
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: rgba(22, 22, 22, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 1rem;
+}
+
+/* Star colors */
+.star-filled { color: var(--accent-pink); }
+.star-empty  { color: rgba(255, 255, 255, 0.14); }
+
+/* Nav links */
+.nav-link {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.nav-link:hover {
+  color: white;
+}
+
+/* Platform icon links */
+.platform-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 2rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-family: var(--font-inter, system-ui, sans-serif);
+  transition: all 0.2s;
+}
+.platform-link:hover {
+  color: white;
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.1);
+}
