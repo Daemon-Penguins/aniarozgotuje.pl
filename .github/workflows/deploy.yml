@@ -1,0 +1,295 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - master   # → aniarozgotuje.pl
+      - develop  # → preview.aniarozgotuje.pl
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: false
+        default: 'master'
+
+# Jeden deploy naraz na każde środowisko
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Build frontend (Next.js → static export)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-frontend:
+    name: Build Frontend (Next.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Set env for branch
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "SITE_URL=https://aniarozgotuje.pl" >> $GITHUB_ENV
+            echo "ENV_NAME=production" >> $GITHUB_ENV
+          else
+            echo "SITE_URL=https://preview.aniarozgotuje.pl" >> $GITHUB_ENV
+            echo "ENV_NAME=preview" >> $GITHUB_ENV
+          fi
+
+      - name: Build Next.js (static export)
+        working-directory: web
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ env.SITE_URL }}/api
+          NEXT_PUBLIC_SITE_URL: ${{ env.SITE_URL }}
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          NEXT_PUBLIC_ENV: ${{ env.ENV_NAME }}
+          NODE_ENV: production
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-${{ github.ref_name }}
+          path: web/out/
+          retention-days: 7
+          include-hidden-files: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Build backend (Symfony 7 → vendor)
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-backend:
+    name: Build Backend (Symfony 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, intl, zip, opcache, bcmath, mbstring
+          coverage: none
+
+      - name: Composer install (no-dev)
+        working-directory: api
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+
+      - name: Prepare backend artifact
+        run: |
+          mkdir -p backend-dist
+          # Kopiuj tylko to co potrzebne na hostingu (bez docker/, testów)
+          cp -r api/src            backend-dist/
+          cp -r api/vendor         backend-dist/
+          cp -r api/config         backend-dist/
+          cp -r api/migrations     backend-dist/
+          cp    api/composer.json  backend-dist/
+          cp    api/public/index.php backend-dist/index.php
+          # .env.prod tworzymy w deploy job z secrets
+          # var/ — katalog runtime, tworzony przez Symfony
+          mkdir -p backend-dist/var/cache backend-dist/var/log
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ github.ref_name }}
+          path: backend-dist/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Assemble & Deploy via FTP
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy via FTP (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-backend]
+    timeout-minutes: 30
+    environment:
+      name: ${{ github.ref_name == 'master' && 'production' || 'preview' }}
+      url: ${{ github.ref_name == 'master' && 'https://aniarozgotuje.pl' || 'https://preview.aniarozgotuje.pl' }}
+
+    steps:
+      - name: Download frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-${{ github.ref_name }}
+          path: dist-frontend/
+
+      - name: Download backend
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-${{ github.ref_name }}
+          path: dist-backend/
+
+      # ─── Wybierz katalog docelowy na FTP ────────────────────────────────
+      - name: Set FTP target directory
+        id: ftp
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "dir=${{ secrets.FTP_DIR_PROD }}" >> $GITHUB_OUTPUT
+          else
+            echo "dir=${{ secrets.FTP_DIR_PREVIEW }}" >> $GITHUB_OUTPUT
+          fi
+
+      # ─── Złóż strukturę public_html ─────────────────────────────────────
+      - name: Assemble public_html
+        env:
+          APP_ENV: ${{ github.ref_name == 'master' && 'prod' || 'dev' }}
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_PASSPHRASE: ${{ secrets.JWT_PASSPHRASE }}
+          SITE_URL: ${{ github.ref_name == 'master' && 'https://aniarozgotuje.pl' || 'https://preview.aniarozgotuje.pl' }}
+        run: |
+          mkdir -p public_html/api/var/cache public_html/api/var/log
+
+          # ── Frontend → public_html/ root ─────────────────────────────────
+          cp -r dist-frontend/. public_html/
+
+          # ── Backend → public_html/api/ ────────────────────────────────────
+          cp -r dist-backend/src       public_html/api/src
+          cp -r dist-backend/vendor    public_html/api/vendor
+          cp -r dist-backend/config    public_html/api/config
+          cp -r dist-backend/migrations public_html/api/migrations
+          cp    dist-backend/index.php public_html/api/index.php
+          cp    dist-backend/composer.json public_html/api/composer.json
+          mkdir -p public_html/api/var/cache public_html/api/var/log
+
+          # ── .env dla Symfony (prod) ───────────────────────────────────────
+          cat > public_html/api/.env << EOF
+          APP_ENV=${APP_ENV}
+          APP_SECRET=${APP_SECRET}
+          DATABASE_URL=${DATABASE_URL}
+          JWT_SECRET_KEY=%kernel.project_dir%/config/jwt/private.pem
+          JWT_PUBLIC_KEY=%kernel.project_dir%/config/jwt/public.pem
+          JWT_PASSPHRASE=${JWT_PASSPHRASE}
+          CORS_ALLOW_ORIGIN=^https?://(${SITE_URL//https:\/\//})$
+          EOF
+
+          # ── .htaccess root (SPA fallback) ─────────────────────────────────
+          cat > public_html/.htaccess << 'HTEOF'
+          Options -Indexes
+          DirectoryIndex index.html index.php
+
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+
+            # API → public_html/api/
+            RewriteRule ^api(/.*)?$ api/$1 [L]
+
+            # SPA fallback — wszystko do index.html
+            RewriteCond %{REQUEST_FILENAME} !-f
+            RewriteCond %{REQUEST_FILENAME} !-d
+            RewriteRule ^ index.html [L]
+          </IfModule>
+
+          # Gzip
+          <IfModule mod_deflate.c>
+            AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json
+          </IfModule>
+
+          # Cache dla statycznych assetów
+          <IfModule mod_expires.c>
+            ExpiresActive On
+            ExpiresByType text/css            "access plus 1 year"
+            ExpiresByType application/javascript "access plus 1 year"
+            ExpiresByType image/webp          "access plus 1 year"
+            ExpiresByType image/png           "access plus 1 year"
+            ExpiresByType image/jpeg          "access plus 1 year"
+            ExpiresByType font/woff2          "access plus 1 year"
+          </IfModule>
+          HTEOF
+
+          # ── .htaccess dla Symfony API ─────────────────────────────────────
+          cat > public_html/api/.htaccess << 'HTEOF'
+          Options -Indexes
+          DirectoryIndex index.php
+
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+            RewriteCond %{REQUEST_FILENAME} !-f
+            RewriteCond %{REQUEST_FILENAME} !-d
+            RewriteRule ^ index.php [QSA,L]
+          </IfModule>
+          HTEOF
+
+          echo "=== Struktura public_html (bez vendor) ==="
+          find public_html -type f -not -path '*/vendor/*' -not -path '*/var/*' | sort
+
+      # ─── Diagnoza FTP ────────────────────────────────────────────────────
+      - name: Install lftp
+        run: sudo apt-get install -y lftp
+
+      - name: Diagnose FTP
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+        run: |
+          echo "=== Runner IP ==="
+          curl -s https://api.ipify.org && echo
+          echo "=== Port 21 ==="
+          timeout 10 bash -c "echo QUIT | nc -w 5 $FTP_SERVER 21" && echo "PORT 21 OK" || echo "PORT 21 UNREACHABLE"
+
+      # ─── Deploy FTP ──────────────────────────────────────────────────────
+      - name: Deploy via lftp
+        env:
+          FTP_SERVER:   ${{ secrets.FTP_SERVER }}
+          FTP_USER:     ${{ secrets.FTP_USERNAME }}
+          FTP_PASS:     ${{ secrets.FTP_PASSWORD }}
+          FTP_DIR:      ${{ steps.ftp.outputs.dir }}
+        run: |
+          lftp -c "
+            set ftp:ssl-allow no;
+            set ftp:passive-mode yes;
+            set ftp:use-epsv no;
+            set ftp:use-mlsd no;
+            set net:timeout 60;
+            set net:max-retries 3;
+            set net:reconnect-interval-base 10;
+            open -u '$FTP_USER','$FTP_PASS' ftp://$FTP_SERVER:21;
+            mirror \
+              --reverse \
+              --verbose \
+              --no-perms \
+              --parallel=2 \
+              --exclude-glob .git \
+              --exclude-glob .gitignore \
+              --exclude vendor/ \
+              --exclude api/var/ \
+              public_html/ $FTP_DIR
+          " 2>&1 | grep -v '^[<>]' | head -200
+
+      # ─── Post-deploy: warmup cache Symfony ───────────────────────────────
+      - name: Warmup Symfony cache (via HTTP)
+        env:
+          SITE_URL: ${{ github.ref_name == 'master' && 'https://aniarozgotuje.pl' || 'https://preview.aniarozgotuje.pl' }}
+        run: |
+          # Czekaj chwilę na propagację FTP
+          sleep 5
+          curl -s -o /dev/null -w "HTTP %{http_code} — $SITE_URL/api/reviews\n" \
+            "$SITE_URL/api/reviews" || echo "Warmup request failed (non-blocking)"
+
+      # ─── Notyfikacja ─────────────────────────────────────────────────────
+      - name: Summary
+        run: |
+          SITE="${{ github.ref_name == 'master' && 'https://aniarozgotuje.pl' || 'https://preview.aniarozgotuje.pl' }}"
+          echo "### ✅ Deploy zakończony" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **URL** | [$SITE]($SITE) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Autor** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
